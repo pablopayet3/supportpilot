@@ -1,0 +1,6 @@
+.env
+venv/
+__pycache__/
+PORTFOLIO_BUILD_BRIEF.md
+
+screenshots/stack.png.png
