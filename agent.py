@@ -107,9 +107,21 @@ def triage(state: State) -> State:
 
 def route_after_triage(state: State) -> str:
     t = state["triage"]
+    if t.get("prompt_injection"):
+        return "injection_block"   # a detected attack never reaches the model
     if t["category"] == "safety" or t["urgency"] == "critical":
         return "safety_escalation"
     return "agent"
+
+
+def injection_block(state: State) -> State:
+    """Deterministic guard: a detected prompt injection is refused in code, never by the model."""
+    reply = (
+        "I can't act on instructions that try to change my role or override our policies, "
+        "so I won't process that request. If you have a genuine account, billing, or safety "
+        "question, I'm glad to help with that."
+    )
+    return {"final_response": reply, "escalated": False, "route": "injection_blocked"}
 
 
 def safety_escalation(state: State) -> State:
@@ -173,7 +185,7 @@ def revise(state: State) -> State:
 
 
 def finalize(state: State) -> State:
-    if state.get("route") == "safety":  # safety path already wrote the reply
+    if state.get("route") in ("safety", "injection_blocked"):  # these paths already wrote the reply
         return {}
     tools_used = tools_called(state)
     return {
@@ -201,6 +213,7 @@ def build_graph(checkpointer: Optional[object] = None):
     g.add_node("redact_pii", redact_pii)
     g.add_node("triage", triage)
     g.add_node("safety_escalation", safety_escalation)
+    g.add_node("injection_block", injection_block)
     g.add_node("agent", agent)
     g.add_node("tools", ToolNode(ALL_TOOLS))
     g.add_node("qa_review", qa_review)
@@ -209,8 +222,9 @@ def build_graph(checkpointer: Optional[object] = None):
 
     g.add_edge(START, "redact_pii")
     g.add_edge("redact_pii", "triage")
-    g.add_conditional_edges("triage", route_after_triage, ["safety_escalation", "agent"])
+    g.add_conditional_edges("triage", route_after_triage, ["injection_block", "safety_escalation", "agent"])
     g.add_edge("safety_escalation", "finalize")
+    g.add_edge("injection_block", "finalize")
     g.add_conditional_edges("agent", after_agent, ["tools", "qa_review"])
     g.add_edge("tools", "agent")
     g.add_conditional_edges("qa_review", after_qa, {"finalize": "finalize", "revise": "revise"})
